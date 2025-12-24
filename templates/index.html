@@ -1,0 +1,60 @@
+<h2>Upstox 9:15 SL Bot</h2>
+
+<form method="post">
+    <label>Instrument Token:</label><br>
+    <input name="instrument" required><br><br>
+
+    <label>Quantity:</label><br>
+    <input name="qty" type="number" required><br><br>
+
+    <label>Trigger Price:</label><br>
+    <input name="trigger" type="number" step="0.05" required><br><br>
+
+    <label>Limit Price:</label><br>
+    <input name="limit" type="number" step="0.05" required><br><br>
+
+    <label>Stop Loss Price:</label><br>
+    <input name="sl" type="number" step="0.05" required><br><br>
+
+    <button type="submit">Add Order</button>
+</form>
+
+<hr>
+
+<h3>Pending Orders</h3>
+
+<table border="1" cellpadding="6" cellspacing="0">
+    <tr>
+        <th>ID</th>
+        <th>Instrument</th>
+        <th>Qty</th>
+        <th>Trigger</th>
+        <th>Limit</th>
+        <th>SL</th>
+        <th>Actions</th>
+    </tr>
+
+    {% for o in orders %}
+    <tr>
+        <td>{{ o[0] }}</td>
+        <td>{{ o[1] }}</td>
+        <td>{{ o[2] }}</td>
+        <td>{{ o[3] }}</td>
+        <td>{{ o[4] }}</td>
+        <td>{{ o[5] }}</td>
+        <td>
+            <!-- Cancel pending order -->
+            <a href="/cancel/{{ o[0] }}"
+               onclick="return confirm('Cancel this order?');">
+               ❌ Cancel
+            </a>
+            |
+            <!-- Exit open position -->
+            <a href="/exit/{{ o[0] }}"
+               onclick="return confirm('Exit this trade at MARKET price?');">
+               🚪 Exit
+            </a>
+        </td>
+    </tr>
+    {% endfor %}
+</table>

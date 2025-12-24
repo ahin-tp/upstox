@@ -1,0 +1,77 @@
+import time
+import pytz
+import schedule
+from datetime import datetime
+from upstox_client import Configuration, ApiClient
+from upstox_client.apis import OrderApi
+from upstox_client.models import PlaceOrderRequest
+
+# ===============================
+# CONFIGURATION (EDIT THIS)
+# ===============================
+
+API_KEY = "YOUR_API_KEY"
+ACCESS_TOKEN = "YOUR_ACCESS_TOKEN"
+
+SYMBOL = "NSE_EQ|INE990Z01012"   # Example: SJS
+QTY = 1
+TRIGGER_PRICE = 1780.0
+LIMIT_PRICE = 1782.0
+
+PRODUCT = "I"        # I = Intraday
+VALIDITY = "DAY"
+ORDER_TYPE = "SL"
+TRANSACTION_TYPE = "BUY"
+
+TIMEZONE = pytz.timezone("Asia/Kolkata")
+ORDER_TIME = "09:15:05"
+
+# ===============================
+# PLACE ORDER FUNCTION
+# ===============================
+
+def place_sl_limit_order():
+    now = datetime.now(TIMEZONE).strftime("%H:%M:%S")
+    print(f"[{now}] Attempting to place order...")
+
+    configuration = Configuration()
+    configuration.access_token = ACCESS_TOKEN
+
+    with ApiClient(configuration) as api_client:
+        order_api = OrderApi(api_client)
+
+        try:
+            order_request = PlaceOrderRequest(
+                quantity=QTY,
+                product=PRODUCT,
+                validity=VALIDITY,
+                price=LIMIT_PRICE,
+                tag="915_SL_ENTRY",
+                instrument_token=SYMBOL,
+                order_type=ORDER_TYPE,
+                transaction_type=TRANSACTION_TYPE,
+                disclosed_quantity=0,
+                trigger_price=TRIGGER_PRICE,
+                is_amo=False
+            )
+
+            response = order_api.place_order(order_request)
+            print("✅ Order placed successfully")
+            print(response)
+
+        except Exception as e:
+            print("❌ Order placement failed")
+            print(str(e))
+
+# ===============================
+# SCHEDULER
+# ===============================
+
+schedule.every().day.at(ORDER_TIME).do(place_sl_limit_order)
+
+print("🕘 Bot running. Waiting for 9:15 AM IST...")
+
+while True:
+    schedule.run_pending()
+    time.sleep(0.5)
+
