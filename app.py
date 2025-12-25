@@ -60,10 +60,11 @@ def cancel(order_id):
     if not order:
         return "Order not found", 404
 
-    instrument, qty, entry_order_id, sl_order_id, status = order
-
-    if status != "PENDING":
+    # ✅ Access by column name
+    if order["status"] != "PENDING":
         return redirect("/")
+
+    entry_order_id = order["entry_order_id"]
 
     if entry_order_id:
         try:
@@ -84,13 +85,12 @@ def exit_trade(order_id):
     if not order:
         return "Order not found", 404
 
-    instrument, qty, entry_order_id, sl_order_id, status = order
-
-    if status != "EXECUTED":
+    # ✅ Access by column name
+    if order["status"] != "EXECUTED":
         return redirect("/")
 
     try:
-        force_exit(instrument, qty)
+        force_exit(order["instrument"], order["qty"])
     except Exception as e:
         print(f"Upstox exit failed: {e}")
 
