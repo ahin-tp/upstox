@@ -5,21 +5,30 @@ from datetime import datetime
 
 from db import (
     get_pending_orders,
-    save_order_ids
+    get_all_orders,
+    save_order_ids,
+    mark_cancelled,
+    mark_exited
 )
+
 from trader import (
     place_entry,
     wait_for_entry_execution,
-    place_stop_loss
+    place_stop_loss,
+    get_order_status,
+    has_open_position
 )
 
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 RUN_TIME = "09:15:05"
 
 
+# ===============================
+# 9:15 ENTRY → CONFIRM → SL
+# ===============================
 def run_orders():
     now = datetime.now(TIMEZONE).strftime("%H:%M:%S")
-    print(f"[{now}] Scheduler started")
+    print(f"[{now}] Scheduler started (ENTRY FLOW)")
 
     orders = get_pending_orders()
 
@@ -31,14 +40,14 @@ def run_orders():
 
             # 1️⃣ Place ENTRY
             entry_order_id = place_entry(order)
-
             print(f"ENTRY placed: {entry_order_id}")
 
             # 2️⃣ Wait for execution
             executed = wait_for_entry_execution(entry_order_id)
 
             if not executed:
-                print(f"ENTRY not executed for DB ID {db_id}")
+                print(f"ENTRY not executed (cancelled/rejected) for DB ID {db_id}")
+                mark_cancelled(db_id)
                 continue
 
             print(f"ENTRY executed for DB ID {db_id}")
@@ -46,20 +55,71 @@ def run_orders():
             # 3️⃣ Place STOP LOSS
             sl_order_id = place_stop_loss(instrument, qty, sl)
 
-            # 4️⃣ Save order IDs
+            # 4️⃣ Save IDs + mark EXECUTED
             save_order_ids(db_id, entry_order_id, sl_order_id)
 
-            print(
-                f"DB:{db_id} ENTRY:{entry_order_id} SL:{sl_order_id}"
-            )
+            print(f"DB:{db_id} ENTRY:{entry_order_id} SL:{sl_order_id}")
 
         except Exception as e:
-            print(f"❌ Error for DB ID {order[0]} → {e}")
+            print(f"❌ ENTRY FLOW ERROR DB ID {order[0]} → {e}")
 
 
+# ===============================
+# RECONCILIATION JOB
+# ===============================
+def reconcile_with_upstox():
+    now = datetime.now(TIMEZONE).strftime("%H:%M:%S")
+    print(f"[{now}] Reconciliation started")
+
+    orders = get_all_orders()
+
+    for o in orders:
+        (
+            db_id,
+            instrument,
+            qty,
+            trigger,
+            limit_price,
+            sl,
+            entry_order_id,
+            sl_order_id,
+            status
+        ) = o
+
+        try:
+            # ----------------------------
+            # PENDING → CANCELLED
+            # ----------------------------
+            if status == "PENDING" and entry_order_id:
+                broker_status = get_order_status(entry_order_id)
+
+                if broker_status in ("CANCELLED", "REJECTED"):
+                    print(f"DB:{db_id} cancelled in Upstox")
+                    mark_cancelled(db_id)
+
+            # ----------------------------
+            # EXECUTED → EXITED
+            # ----------------------------
+            if status == "EXECUTED":
+                open_pos = has_open_position(instrument)
+
+                if not open_pos:
+                    print(f"DB:{db_id} exited in Upstox")
+                    mark_exited(db_id)
+
+        except Exception as e:
+            print(f"❌ RECON ERROR DB ID {db_id} → {e}")
+
+
+# ===============================
+# SCHEDULING
+# ===============================
 schedule.every().day.at(RUN_TIME).do(run_orders)
 
-print("⏳ Waiting for 9:15 AM IST...")
+# Reconcile every 1 minute
+schedule.every(1).minutes.do(reconcile_with_upstox)
+
+print("⏳ Scheduler running (ENTRY + RECONCILIATION)...")
 
 while True:
     schedule.run_pending()

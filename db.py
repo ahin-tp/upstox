@@ -1,7 +1,10 @@
 import sqlite3
 
+# ===============================
 # DB connection
+# ===============================
 conn = sqlite3.connect("orders.db", check_same_thread=False)
+conn.row_factory = sqlite3.Row   # ⭐ IMPORTANT
 cursor = conn.cursor()
 
 # ===============================
@@ -16,10 +19,10 @@ CREATE TABLE IF NOT EXISTS orders (
     limit_price REAL NOT NULL,
     stop_loss REAL NOT NULL,
 
-    entry_order_id TEXT,      -- Upstox BUY order id
-    sl_order_id TEXT,         -- Upstox SL order id
+    entry_order_id TEXT,
+    sl_order_id TEXT,
 
-    status TEXT DEFAULT 'PENDING'   -- PENDING | EXECUTED | EXITED | CANCELLED
+    status TEXT DEFAULT 'PENDING'
 )
 """)
 conn.commit()
@@ -28,9 +31,6 @@ conn.commit()
 # ADD ORDER (from UI)
 # ===============================
 def add_order(data):
-    """
-    data = (instrument, qty, trigger, limit_price, stop_loss)
-    """
     cursor.execute("""
         INSERT INTO orders (
             instrument, qty, trigger, limit_price, stop_loss
@@ -43,7 +43,7 @@ def add_order(data):
 # ===============================
 def get_pending_orders():
     cursor.execute("""
-        SELECT id, instrument, qty, trigger, limit_price, stop_loss
+        SELECT *
         FROM orders
         WHERE status = 'PENDING'
     """)
@@ -87,12 +87,16 @@ def mark_exited(db_id):
 # ===============================
 def get_order_by_id(db_id):
     cursor.execute("""
-        SELECT instrument, qty, entry_order_id, sl_order_id, status
+        SELECT *
         FROM orders
         WHERE id = ?
     """, (db_id,))
     return cursor.fetchone()
 
 def get_all_orders():
-    cursor.execute("SELECT * FROM orders ORDER BY id DESC")
+    cursor.execute("""
+        SELECT *
+        FROM orders
+        ORDER BY id DESC
+    """)
     return cursor.fetchall()
