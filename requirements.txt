@@ -6,3 +6,4 @@ git+https://github.com/upstox/upstox-python.git
 schedule
 pytz
 #sqlite3
+protobuf==3.20.3

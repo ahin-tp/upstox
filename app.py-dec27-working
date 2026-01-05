@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, jsonify
+from flask import Flask, render_template, request, redirect
 
 # ===============================
 # DB imports
@@ -12,17 +12,19 @@ from db import (
 )
 
 # ===============================
-# Trader actions (manual only)
+# Trader actions
 # ===============================
-from trader import (
-    cancel_order,
-    force_exit
-)
+from trader import cancel_order, force_exit
 
 # ===============================
-# App setup
+# Upstox connectivity imports
 # ===============================
+from upstox_client import Configuration, ApiClient
+from upstox_client.api.user_api import UserApi
+from config import ACCESS_TOKEN
+
 app = Flask(__name__)
+
 
 # ===============================
 # HOME / ADD ORDER
@@ -32,9 +34,9 @@ def index():
     if request.method == "POST":
         instrument = request.form["instrument"].strip()
 
-        # Safety check
-        if not instrument.startswith("NSE_EQ|"):
-            return "Invalid instrument token", 400
+        # HARD SAFETY CHECK
+        if not instrument.startswith("NSE_"):
+            return "Invalid instrument token. Example: NSE_EQ|INE002A01018", 400
 
         add_order((
             instrument,
@@ -58,12 +60,15 @@ def cancel(order_id):
     if not order:
         return "Order not found", 404
 
+    # ✅ Access by column name
     if order["status"] != "PENDING":
         return redirect("/")
 
-    if order["entry_order_id"]:
+    entry_order_id = order["entry_order_id"]
+
+    if entry_order_id:
         try:
-            cancel_order(order["entry_order_id"])
+            cancel_order(entry_order_id)
         except Exception as e:
             print(f"Upstox cancel failed: {e}")
 
@@ -80,6 +85,7 @@ def exit_trade(order_id):
     if not order:
         return "Order not found", 404
 
+    # ✅ Access by column name
     if order["status"] != "EXECUTED":
         return redirect("/")
 
@@ -93,11 +99,29 @@ def exit_trade(order_id):
 
 
 # ===============================
-# HEALTH CHECK
+# UPSTOX CONNECTIVITY CHECK
 # ===============================
-@app.route("/health")
-def health():
-    return jsonify({"status": "OK"})
+@app.route("/upstox-health")
+def upstox_health():
+    try:
+        cfg = Configuration()
+        cfg.access_token = ACCESS_TOKEN
+
+        client = ApiClient(cfg)
+        user_api = UserApi(client)
+
+        profile = user_api.get_profile(api_version="2.0")
+
+        return {
+            "status": "CONNECTED",
+            "user": profile.data.user_name
+        }
+
+    except Exception as e:
+        return {
+            "status": "FAILED",
+            "error": str(e)
+        }, 500
 
 
 # ===============================
