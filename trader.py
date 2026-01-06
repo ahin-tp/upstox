@@ -4,9 +4,6 @@ from upstox_client.api.order_api import OrderApi
 from upstox_client.api.portfolio_api import PortfolioApi
 from upstox_client.models.place_order_request import PlaceOrderRequest
 from config import ACCESS_TOKEN
-from upstox_client.api.user_api import UserApi
-
-
 
 POLL_INTERVAL = 2        # seconds
 MAX_WAIT_TIME = 60       # seconds
@@ -182,37 +179,3 @@ def has_open_position(instrument):
             return True
 
     return False
-
-
-
-# ===============================
-# CONNECTIVITY CHECK (SDK PROOF)
-# ===============================
-def test_upstox_connectivity():
-    """
-    SDK-version-proof connectivity test.
-    Does NOT place any trade.
-    """
-    try:
-        client = get_api()
-
-        # 🔐 Auth check
-        user_api = UserApi(client)
-        profile = user_api.get_profile(api_version="2.0")
-
-        # 📡 Trading API reachability check
-        portfolio_api = PortfolioApi(client)
-        positions = portfolio_api.get_positions(api_version="2.0")
-
-        return {
-            "status": "OK",
-            "user": profile.data.user_name,
-            "positions_count": len(positions.data)
-        }
-
-    except Exception as e:
-        return {
-            "status": "ERROR",
-            "error": str(e)
-        }
-
