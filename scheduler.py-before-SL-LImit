@@ -13,6 +13,7 @@ from db import (
 
 from trader import (
     place_entry,
+    wait_for_entry_execution,
     place_stop_loss,
     get_order_status,
     has_open_position
@@ -23,48 +24,65 @@ from trader import (
 # ===============================
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-ENTRY_TIME = dtime(9, 15, 10)
+ENTRY_TIME = dtime(10, 10, 10)
 WINDOW_SECONDS = 30
 entry_done_today = False
 
 
 # ===============================
-# ENTRY FLOW (NO WAITING)
+# ENTRY FLOW
 # ===============================
 def run_orders():
     now = datetime.now(TIMEZONE).strftime("%H:%M:%S")
-    print(f"[{now}] 🚀 ENTRY FLOW STARTED", flush=True)
+    print(f"[{now}] 🚀 Scheduler started (ENTRY FLOW)", flush=True)
 
     orders = get_pending_orders()
 
     if not orders:
-        print("ℹ️ No pending orders", flush=True)
+        print("ℹ️ No pending orders found", flush=True)
         return
 
-    for o in orders:
+    for order in orders:
         try:
-            db_id = o["id"]
-            instrument = o["instrument"]
-            qty = o["qty"]
-            trigger = o["trigger"]
-            limit_price = o["limit_price"]
+            # ✅ SAFE COLUMN ACCESS
+            db_id = order["id"]
+            instrument = order["instrument"]
+            qty = order["qty"]
+            trigger = order["trigger"]
+            limit_price = order["limit_price"]
+            sl = order["stop_loss"]
 
-            print(f"📥 Placing SL-LIMIT ENTRY for DB:{db_id}", flush=True)
+            print(f"📥 Placing ENTRY for DB ID {db_id}", flush=True)
 
+            # 1️⃣ Place ENTRY
             entry_order_id = place_entry(
-                instrument, qty, trigger, limit_price
+                (db_id, instrument, qty, trigger, limit_price, sl)
             )
+            print(f"✅ ENTRY placed: {entry_order_id}", flush=True)
+
+            # 2️⃣ Wait for execution
+            executed = wait_for_entry_execution(entry_order_id)
+
+            if not executed:
+                print(f"❌ ENTRY not executed for DB ID {db_id}", flush=True)
+                mark_cancelled(db_id)
+                continue
+
+            print(f"✅ ENTRY executed for DB ID {db_id}", flush=True)
+
+            # 3️⃣ Place STOP LOSS
+            sl_order_id = place_stop_loss(instrument, qty, sl)
+
+            # 4️⃣ Save IDs
+            save_order_ids(db_id, entry_order_id, sl_order_id)
 
             print(
-                f"✅ ENTRY PLACED (Trigger Pending) | DB:{db_id} | Order:{entry_order_id}",
+                f"📌 DB:{db_id} ENTRY:{entry_order_id} SL:{sl_order_id}",
                 flush=True
             )
 
-            # 🔥 DO NOT WAIT → LET UPSTOX HANDLE TRIGGER
-            save_order_ids(db_id, entry_order_id, None)
-
         except Exception as e:
-            print(f"❌ ENTRY ERROR DB:{o['id']} → {e}", flush=True)
+            print(f"❌ ENTRY FLOW ERROR DB ID {order['id']} → {e}", flush=True)
 
 
 # ===============================
@@ -75,17 +93,20 @@ def entry_guard():
 
     now = datetime.now(TIMEZONE)
 
+    # Reset at midnight
     if now.hour == 0 and now.minute == 0:
         entry_done_today = False
 
-    target = now.replace(
+    target_time = now.replace(
         hour=ENTRY_TIME.hour,
         minute=ENTRY_TIME.minute,
         second=ENTRY_TIME.second,
         microsecond=0
     )
 
-    if abs((now - target).total_seconds()) <= WINDOW_SECONDS and not entry_done_today:
+    diff_seconds = abs((now - target_time).total_seconds())
+
+    if diff_seconds <= WINDOW_SECONDS and not entry_done_today:
         print("🚀 ENTRY WINDOW HIT", flush=True)
         run_orders()
         entry_done_today = True
@@ -96,50 +117,40 @@ def entry_guard():
 # ===============================
 def reconcile_with_upstox():
     now = datetime.now(TIMEZONE).strftime("%H:%M:%S")
-    print(f"[{now}] 🔄 Reconciliation", flush=True)
+    print(f"[{now}] 🔄 Reconciliation started", flush=True)
 
     orders = get_all_orders()
 
     for o in orders:
         try:
+            # ✅ SAFE COLUMN ACCESS
             db_id = o["id"]
             instrument = o["instrument"]
             entry_order_id = o["entry_order_id"]
-            sl_order_id = o["sl_order_id"]
             status = o["status"]
 
-            # ENTRY → EXECUTED
             if status == "PENDING" and entry_order_id:
                 broker_status = get_order_status(entry_order_id)
-
-                if broker_status == "COMPLETE":
-                    print(f"✅ ENTRY EXECUTED DB:{db_id}", flush=True)
-
-                    sl_id = place_stop_loss(
-                        instrument, o["qty"], o["stop_loss"]
-                    )
-
-                    save_order_ids(db_id, entry_order_id, sl_id)
-
-                elif broker_status in ("CANCELLED", "REJECTED"):
+                if broker_status in ("CANCELLED", "REJECTED"):
+                    print(f"❌ DB:{db_id} cancelled in Upstox", flush=True)
                     mark_cancelled(db_id)
 
-            # EXITED
             if status == "EXECUTED":
                 if not has_open_position(instrument):
+                    print(f"🏁 DB:{db_id} exited in Upstox", flush=True)
                     mark_exited(db_id)
 
         except Exception as e:
-            print(f"❌ RECON ERROR DB:{o['id']} → {e}", flush=True)
+            print(f"❌ RECON ERROR DB ID {o['id']} → {e}", flush=True)
 
 
 # ===============================
-# SCHEDULER
+# SCHEDULER SETUP
 # ===============================
 schedule.every(5).seconds.do(entry_guard)
 schedule.every(1).minutes.do(reconcile_with_upstox)
 
-print("⏳ Scheduler running (PRODUCTION MODE)", flush=True)
+print("⏳ Scheduler running (ENTRY + RECONCILIATION)...", flush=True)
 
 while True:
     schedule.run_pending()

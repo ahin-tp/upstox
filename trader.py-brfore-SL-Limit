@@ -1,0 +1,196 @@
+import time
+from upstox_client import Configuration, ApiClient
+from upstox_client.api.order_api import OrderApi
+from upstox_client.api.portfolio_api import PortfolioApi
+from upstox_client.models.place_order_request import PlaceOrderRequest
+from config import ACCESS_TOKEN
+
+POLL_INTERVAL = 2        # seconds
+MAX_WAIT_TIME = 60       # seconds
+
+
+# ===============================
+# API CLIENT
+# ===============================
+def get_api():
+    cfg = Configuration()
+    cfg.access_token = ACCESS_TOKEN
+    return ApiClient(cfg)
+
+
+# ===============================
+# PLACE ENTRY ONLY
+# ===============================
+def place_entry(order):
+    """
+    Places BUY SL-LIMIT entry
+    """
+    _, instrument, qty, trigger, limit_price, _ = order
+
+    client = get_api()
+    api = OrderApi(client)
+
+    entry = PlaceOrderRequest(
+        instrument_token=instrument,
+        quantity=qty,
+        disclosed_quantity=0,          # REQUIRED
+        order_type="SL",
+        transaction_type="BUY",
+        product="I",
+        price=limit_price,
+        trigger_price=trigger,
+        validity="DAY",
+        is_amo=False
+    )
+
+    resp = api.place_order(
+        api_version="2.0",
+        body=entry
+    )
+
+    print("🟢 Placing order for instrument_token:", instrument)
+    return resp.data.order_id
+
+
+# ===============================
+# WAIT FOR ENTRY EXECUTION (FIXED)
+# ===============================
+def wait_for_entry_execution(order_id):
+    """
+    Polls Upstox until entry is COMPLETE or timeout
+    Handles SDK response as LIST
+    """
+    client = get_api()
+    api = OrderApi(client)
+
+    waited = 0
+    while waited < MAX_WAIT_TIME:
+        resp = api.get_order_details(
+            api_version="2.0",
+            order_id=order_id
+        )
+
+        # 🔥 SDK returns LIST
+        if not resp.data:
+            time.sleep(POLL_INTERVAL)
+            waited += POLL_INTERVAL
+            continue
+
+        order = resp.data[0]
+        status = order.status
+
+        if status == "COMPLETE":
+            return True
+
+        if status in ("REJECTED", "CANCELLED"):
+            print(f"❌ Order {order_id} {status}")
+            return False
+
+        time.sleep(POLL_INTERVAL)
+        waited += POLL_INTERVAL
+
+    return False
+
+
+# ===============================
+# PLACE STOP LOSS (ONLY AFTER ENTRY)
+# ===============================
+def place_stop_loss(instrument, qty, sl):
+    """
+    Places SELL SL after entry execution
+    """
+    client = get_api()
+    api = OrderApi(client)
+
+    sl_order = PlaceOrderRequest(
+        instrument_token=instrument,
+        quantity=qty,
+        disclosed_quantity=0,          # REQUIRED
+        order_type="SL",
+        transaction_type="SELL",
+        product="I",
+        price=round(sl - 0.2, 2),
+        trigger_price=sl,
+        validity="DAY",
+        is_amo=False
+    )
+
+    resp = api.place_order(
+        api_version="2.0",
+        body=sl_order
+    )
+
+    return resp.data.order_id
+
+
+# ===============================
+# FORCE EXIT (MARKET)
+# ===============================
+def force_exit(instrument, qty):
+    client = get_api()
+    api = OrderApi(client)
+
+    exit_order = PlaceOrderRequest(
+        instrument_token=instrument,
+        quantity=qty,
+        disclosed_quantity=0,          # REQUIRED
+        order_type="MARKET",
+        transaction_type="SELL",
+        product="I",
+        validity="DAY",
+        is_amo=False
+    )
+
+    resp = api.place_order(
+        api_version="2.0",
+        body=exit_order
+    )
+
+    return resp.data.order_id
+
+
+# ===============================
+# CANCEL ORDER
+# ===============================
+def cancel_order(order_id):
+    if not order_id:
+        return
+
+    client = get_api()
+    api = OrderApi(client)
+
+    api.cancel_order(
+        api_version="2.0",
+        order_id=order_id
+    )
+
+
+# ===============================
+# RECONCILIATION HELPERS (FIXED)
+# ===============================
+def get_order_status(order_id):
+    client = get_api()
+    api = OrderApi(client)
+
+    resp = api.get_order_details(
+        api_version="2.0",
+        order_id=order_id
+    )
+
+    if not resp.data:
+        return "UNKNOWN"
+
+    return resp.data[0].status
+
+
+def has_open_position(instrument):
+    client = get_api()
+    portfolio_api = PortfolioApi(client)
+
+    positions = portfolio_api.get_positions(api_version="2.0")
+
+    for p in positions.data:
+        if p.instrument_token == instrument and p.quantity != 0:
+            return True
+
+    return False

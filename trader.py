@@ -5,9 +5,6 @@ from upstox_client.api.portfolio_api import PortfolioApi
 from upstox_client.models.place_order_request import PlaceOrderRequest
 from config import ACCESS_TOKEN
 
-POLL_INTERVAL = 2        # seconds
-MAX_WAIT_TIME = 60       # seconds
-
 
 # ===============================
 # API CLIENT
@@ -19,20 +16,20 @@ def get_api():
 
 
 # ===============================
-# PLACE ENTRY ONLY
+# PLACE ENTRY (SL-LIMIT → TRIGGER PENDING)
 # ===============================
-def place_entry(order):
+def place_entry(instrument, qty, trigger, limit_price):
     """
-    Places BUY SL-LIMIT entry
+    Places BUY SL-LIMIT order.
+    Appears as TRIGGER PENDING in Upstox.
     """
-    _, instrument, qty, trigger, limit_price, _ = order
-
     client = get_api()
     api = OrderApi(client)
 
     entry = PlaceOrderRequest(
         instrument_token=instrument,
         quantity=qty,
+        disclosed_quantity=0,
         order_type="SL",
         transaction_type="BUY",
         product="I",
@@ -42,59 +39,21 @@ def place_entry(order):
         is_amo=False
     )
 
-    resp = api.place_order(
-        api_version="2.0",
-        body=entry
-    )
-    print("🟢 Placing order for instrument_token:", instrument)
-
+    resp = api.place_order(api_version="2.0", body=entry)
     return resp.data.order_id
 
 
 # ===============================
-# WAIT FOR ENTRY EXECUTION
-# ===============================
-def wait_for_entry_execution(order_id):
-    """
-    Polls Upstox until entry is COMPLETE or timeout
-    """
-    client = get_api()
-    api = OrderApi(client)
-
-    waited = 0
-    while waited < MAX_WAIT_TIME:
-        resp = api.get_order_details(
-            api_version="2.0",
-            order_id=order_id
-        )
-
-        status = resp.data.status
-
-        if status == "COMPLETE":
-            return True
-
-        if status in ("REJECTED", "CANCELLED"):
-            return False
-
-        time.sleep(POLL_INTERVAL)
-        waited += POLL_INTERVAL
-
-    return False
-
-
-# ===============================
-# PLACE STOP LOSS (ONLY AFTER ENTRY)
+# PLACE STOP LOSS (AFTER ENTRY COMPLETE)
 # ===============================
 def place_stop_loss(instrument, qty, sl):
-    """
-    Places SELL SL after entry execution
-    """
     client = get_api()
     api = OrderApi(client)
 
     sl_order = PlaceOrderRequest(
         instrument_token=instrument,
         quantity=qty,
+        disclosed_quantity=0,
         order_type="SL",
         transaction_type="SELL",
         product="I",
@@ -104,24 +63,74 @@ def place_stop_loss(instrument, qty, sl):
         is_amo=False
     )
 
-    resp = api.place_order(
-        api_version="2.0",
-        body=sl_order
-    )
-
+    resp = api.place_order(api_version="2.0", body=sl_order)
     return resp.data.order_id
 
 
 # ===============================
-# FORCE EXIT (MARKET)
+# ORDER STATUS
+# ===============================
+def get_order_status(order_id):
+    client = get_api()
+    api = OrderApi(client)
+
+    resp = api.get_order_details(api_version="2.0", order_id=order_id)
+
+    if not resp.data:
+        return "UNKNOWN"
+
+    return resp.data[0].status
+
+
+# ===============================
+# POSITION CHECK
+# ===============================
+def has_open_position(instrument):
+    client = get_api()
+    portfolio_api = PortfolioApi(client)
+
+    positions = portfolio_api.get_positions(api_version="2.0")
+
+    for p in positions.data:
+        if p.instrument_token == instrument and p.quantity != 0:
+            return True
+
+    return False
+
+# ===============================
+# CANCEL ORDER (USED BY app.py)
+# ===============================
+def cancel_order(order_id):
+    """
+    Cancels an open order in Upstox.
+    Used by web UI.
+    """
+    if not order_id:
+        return
+
+    client = get_api()
+    api = OrderApi(client)
+
+    api.cancel_order(
+        api_version="2.0",
+        order_id=order_id
+    )
+
+# ===============================
+# FORCE EXIT (MARKET) – USED BY app.py
 # ===============================
 def force_exit(instrument, qty):
+    """
+    Force exit a position using MARKET order.
+    Used by web UI.
+    """
     client = get_api()
     api = OrderApi(client)
 
     exit_order = PlaceOrderRequest(
         instrument_token=instrument,
         quantity=qty,
+        disclosed_quantity=0,
         order_type="MARKET",
         transaction_type="SELL",
         product="I",
@@ -135,47 +144,3 @@ def force_exit(instrument, qty):
     )
 
     return resp.data.order_id
-
-
-# ===============================
-# CANCEL ORDER
-# ===============================
-def cancel_order(order_id):
-    if not order_id:
-        return
-
-    client = get_api()
-    api = OrderApi(client)
-
-    api.cancel_order(
-        api_version="2.0",
-        order_id=order_id
-    )
-
-
-# ===============================
-# RECONCILIATION HELPERS
-# ===============================
-def get_order_status(order_id):
-    client = get_api()
-    api = OrderApi(client)
-
-    resp = api.get_order_details(
-        api_version="2.0",
-        order_id=order_id
-    )
-
-    return resp.data.status
-
-
-def has_open_position(instrument):
-    client = get_api()
-    portfolio_api = PortfolioApi(client)
-
-    positions = portfolio_api.get_positions(api_version="2.0")
-
-    for p in positions.data:
-        if p.instrument_token == instrument and p.quantity != 0:
-            return True
-
-    return False
